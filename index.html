@@ -108,23 +108,23 @@
             4. 「VRモードで表示」をクリックしてVR体験開始<br>
             <br>
             <strong>VRコントローラー操作:</strong><br>
-            • 右スティック上下: オブジェクトを横軸で回転<br>
-            • 左スティック上下: オブジェクトを奥行き方向に移動<br>
-            • 左スティック左右: オブジェクトを横方向に移動<br>
-            • トリガー: 背景&ガイド線の色を反転<br>
-            • Yボタン: VR表示解除
+            • 左右スティック: 移動<br>
+            • グリップボタン: モデルを掴んで回転・移動<br>
+            • トリガー: 選択/操作<br>
+            • Yボタン: パススルーON/OFF
         </div>
     </div>
     <div id="container"></div>
 
     <script>
-        let scene, camera, renderer, model, gridHelper;
+        let scene, camera, renderer, model;
         let controllers = [];
-        let isDarkMode = true;
+        let isPassthrough = false;
         let modelScale = 1;
         let modelPosition = new THREE.Vector3(0, 1.5, -2);
-        let modelRotation = 0;
-        let vrSession = null;
+        let isDragging = false;
+        let dragController = null;
+        let previousControllerPosition = new THREE.Vector3();
 
         function init() {
             const container = document.getElementById('container');
@@ -164,6 +164,8 @@
                 
                 controller.addEventListener('selectstart', onSelectStart);
                 controller.addEventListener('selectend', onSelectEnd);
+                controller.addEventListener('squeezestart', onSqueezeStart);
+                controller.addEventListener('squeezeend', onSqueezeEnd);
                 
                 scene.add(controller);
                 
@@ -185,35 +187,33 @@
 
         function onSelectStart(event) {
             const controller = event.target;
-            toggleBackgroundColor();
+            if (controller.userData.index === 1) {
+                isPassthrough = !isPassthrough;
+                scene.background = isPassthrough ? null : new THREE.Color(0x1a1a1a);
+                updateStatus(isPassthrough ? 'パススルーON' : 'パススルーOFF');
+            }
         }
 
         function onSelectEnd(event) {
         }
 
-        function toggleBackgroundColor() {
-            isDarkMode = !isDarkMode;
-            
-            if (isDarkMode) {
-                scene.background = new THREE.Color(0x1a1a1a);
-                if (gridHelper) {
-                    gridHelper.material.color.setHex(0x444444);
-                    gridHelper.material.needsUpdate = true;
-                }
-            } else {
-                scene.background = new THREE.Color(0xe0e0e0);
-                if (gridHelper) {
-                    gridHelper.material.color.setHex(0xaaaaaa);
-                    gridHelper.material.needsUpdate = true;
-                }
+        function onSqueezeStart(event) {
+            const controller = event.target;
+            if (model) {
+                isDragging = true;
+                dragController = controller;
+                previousControllerPosition.copy(controller.position);
             }
-            
-            updateStatus(isDarkMode ? '背景: ダーク' : '背景: ライト');
+        }
+
+        function onSqueezeEnd(event) {
+            isDragging = false;
+            dragController = null;
         }
 
         function updateControllerInput() {
             const session = renderer.xr.getSession();
-            if (!session || !model) return;
+            if (!session) return;
 
             session.inputSources.forEach((source, i) => {
                 if (source.gamepad) {
@@ -221,42 +221,45 @@
                     const axes = gamepad.axes;
                     
                     if (axes.length >= 4) {
-                        const moveSpeed = 0.03;
-                        const rotateSpeed = 0.03;
+                        const moveSpeed = 0.05;
+                        const rotateSpeed = 0.02;
                         
-                        // 左スティック: 左右で横移動、上下で奥行き移動
-                        if (Math.abs(axes[0]) > 0.1 || Math.abs(axes[1]) > 0.1) {
-                            modelPosition.x += axes[0] * moveSpeed;
-                            modelPosition.z += axes[1] * moveSpeed;
-                            model.position.copy(modelPosition);
-                        }
-                        
-                        // 右スティック: 上下で横軸回転
-                        if (Math.abs(axes[3]) > 0.1) {
-                            modelRotation += axes[3] * rotateSpeed;
-                            model.rotation.x = modelRotation;
+                        if (model) {
+                            if (Math.abs(axes[2]) > 0.1 || Math.abs(axes[3]) > 0.1) {
+                                model.rotation.y += axes[2] * rotateSpeed;
+                                modelPosition.z += axes[3] * moveSpeed;
+                                model.position.copy(modelPosition);
+                            }
+                            
+                            if (Math.abs(axes[0]) > 0.1 || Math.abs(axes[1]) > 0.1) {
+                                modelPosition.x += axes[0] * moveSpeed;
+                                modelPosition.y -= axes[1] * moveSpeed;
+                                model.position.copy(modelPosition);
+                            }
                         }
                     }
                     
-                    // Yボタン (ボタンインデックス4) でVR終了
-                    if (gamepad.buttons[4] && gamepad.buttons[4].pressed) {
-                        if (!gamepad.buttons[4].wasPressed) {
-                            exitVR();
-                        }
-                        gamepad.buttons[4].wasPressed = true;
-                    } else {
-                        gamepad.buttons[4].wasPressed = false;
+                    if (gamepad.buttons[4] && gamepad.buttons[4].pressed && model) {
+                        modelScale *= 1.01;
+                        model.scale.setScalar(modelScale);
+                    }
+                    if (gamepad.buttons[5] && gamepad.buttons[5].pressed && model) {
+                        modelScale *= 0.99;
+                        model.scale.setScalar(modelScale);
                     }
                 }
             });
-        }
 
-        function exitVR() {
-            if (vrSession) {
-                vrSession.end();
-                vrSession = null;
-                document.getElementById('ui').style.display = 'block';
-                updateStatus('VR表示を解除しました');
+            if (isDragging && dragController && model) {
+                const deltaPosition = new THREE.Vector3().subVectors(
+                    dragController.position,
+                    previousControllerPosition
+                );
+                
+                modelPosition.add(deltaPosition);
+                model.position.copy(modelPosition);
+                
+                previousControllerPosition.copy(dragController.position);
             }
         }
 
@@ -362,17 +365,11 @@
                     return;
                 }
                 
-                vrSession = await navigator.xr.requestSession('immersive-vr', {
+                const session = await navigator.xr.requestSession('immersive-vr', {
                     optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
                 });
                 
-                vrSession.addEventListener('end', () => {
-                    document.getElementById('ui').style.display = 'block';
-                    vrSession = null;
-                    updateStatus('VR表示を解除しました');
-                });
-                
-                await renderer.xr.setSession(vrSession);
+                await renderer.xr.setSession(session);
                 document.getElementById('ui').style.display = 'none';
                 updateStatus('VRモードで表示中...');
                 
