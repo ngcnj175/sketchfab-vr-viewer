@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sketchfab VR Viewer</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <style>
         body {
             margin: 0;
@@ -98,35 +97,22 @@
             <label>Sketchfab モデルURL:</label>
             <input type="text" id="urlInput" placeholder="https://sketchfab.com/3d-models/... または モデルID を入力">
         </div>
-        <div class="input-group">
-            <label>ローカル3Dモデル (.glb, .gltf):</label>
-            <input type="file" id="fileInput" accept=".glb,.gltf">
-        </div>
-        <button id="loadBtn">Sketchfabモデルを読み込む</button>
-        <button id="loadFileBtn">ローカルファイルを読み込む</button>
+        <button id="loadBtn">モデルを読み込む</button>
         <button id="vrBtn" disabled>VRモードで表示</button>
-        <div id="status"></div>
+        <div id="status">SketchfabのモデルURLまたはIDを入力してください</div>
         <div class="info">
             <strong>使い方:</strong><br>
-            1. Sketchfabのモデル または ローカルの.glb/.gltfファイルを読み込む<br>
-            2. 「VRモードで表示」をクリックしてVR体験開始<br>
+            1. Sketchfabのモデルページから「埋め込み」コードを取得<br>
+            2. iframe内のsrc属性のURL、または末尾のモデルIDをコピー<br>
+            3. 上記の入力欄にペーストして「モデルを読み込む」をクリック<br>
+            4. 「VRモードで表示」をクリックしてVR体験開始<br>
             <br>
             <strong>VRコントローラー操作:</strong><br>
-            【右コントローラー】<br>
-            • 右スティック上下: X軸回転<br>
-            • 右スティック左右: Z軸回転<br>
-            • Aボタン: ガイド線表示ON/OFF<br>
-            • Bボタン: VR表示解除<br>
-            <br>
-            【左コントローラー】<br>
-            • 左スティック上下: Y軸移動<br>
-            • 左スティック左右: X軸移動<br>
-            • Xボタン: パススルーON/OFF<br>
-            • Yボタン: 背景色反転(ダーク⇄ライト)<br>
-            <br>
-            【両手操作】<br>
-            • 両グリップ同時押し: 両手の距離で拡大/縮小<br>
-            • トリガー: 選択操作
+            • 右スティック上下: オブジェクトを横軸で回転<br>
+            • 左スティック上下: オブジェクトを奥行き方向に移動<br>
+            • 左スティック左右: オブジェクトを横方向に移動<br>
+            • トリガー: 背景&ガイド線の色を反転<br>
+            • Yボタン: VR表示解除
         </div>
     </div>
     <div id="container"></div>
@@ -135,16 +121,10 @@
         let scene, camera, renderer, model, gridHelper;
         let controllers = [];
         let isDarkMode = true;
-        let isGridVisible = true;
-        let isPassthrough = false;
         let modelScale = 1;
         let modelPosition = new THREE.Vector3(0, 1.5, -2);
-        let modelRotation = { x: 0, y: 0, z: 0 };
+        let modelRotation = 0;
         let vrSession = null;
-        let leftGrip = false;
-        let rightGrip = false;
-        let initialGripDistance = 0;
-        let initialScale = 1;
 
         function init() {
             const container = document.getElementById('container');
@@ -167,8 +147,7 @@
             directionalLight.position.set(5, 10, 7.5);
             scene.add(directionalLight);
             
-            const gridHelper = new THREE.GridHelper(20, 40, 0x808080, 0x808080);
-            gridHelper.material.linewidth = 0.5;
+            const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
             scene.add(gridHelper);
             
             setupControllers();
@@ -185,8 +164,6 @@
                 
                 controller.addEventListener('selectstart', onSelectStart);
                 controller.addEventListener('selectend', onSelectEnd);
-                controller.addEventListener('squeezestart', onSqueezeStart);
-                controller.addEventListener('squeezeend', onSqueezeEnd);
                 
                 scene.add(controller);
                 
@@ -207,54 +184,30 @@
         }
 
         function onSelectStart(event) {
+            const controller = event.target;
+            toggleBackgroundColor();
         }
 
         function onSelectEnd(event) {
         }
 
-        function onSqueezeStart(event) {
-            const controller = event.target;
-            if (controller.userData.index === 0) {
-                leftGrip = true;
-            } else {
-                rightGrip = true;
-            }
-            
-            if (leftGrip && rightGrip) {
-                const distance = controllers[0].controller.position.distanceTo(controllers[1].controller.position);
-                initialGripDistance = distance;
-                initialScale = modelScale;
-            }
-        }
-
-        function onSqueezeEnd(event) {
-            const controller = event.target;
-            if (controller.userData.index === 0) {
-                leftGrip = false;
-            } else {
-                rightGrip = false;
-            }
-        }
-
-        function toggleGrid() {
-            isGridVisible = !isGridVisible;
-            if (gridHelper) {
-                gridHelper.visible = isGridVisible;
-            }
-            updateStatus(isGridVisible ? 'ガイド線: 表示' : 'ガイド線: 非表示');
-        }
-
-        function togglePassthrough() {
-            isPassthrough = !isPassthrough;
-            scene.background = isPassthrough ? null : (isDarkMode ? new THREE.Color(0x1a1a1a) : new THREE.Color(0xe0e0e0));
-            updateStatus(isPassthrough ? 'パススルー: ON' : 'パススルー: OFF');
-        }
-
         function toggleBackgroundColor() {
             isDarkMode = !isDarkMode;
-            if (!isPassthrough) {
-                scene.background = isDarkMode ? new THREE.Color(0x1a1a1a) : new THREE.Color(0xe0e0e0);
+            
+            if (isDarkMode) {
+                scene.background = new THREE.Color(0x1a1a1a);
+                if (gridHelper) {
+                    gridHelper.material.color.setHex(0x444444);
+                    gridHelper.material.needsUpdate = true;
+                }
+            } else {
+                scene.background = new THREE.Color(0xe0e0e0);
+                if (gridHelper) {
+                    gridHelper.material.color.setHex(0xaaaaaa);
+                    gridHelper.material.needsUpdate = true;
+                }
             }
+            
             updateStatus(isDarkMode ? '背景: ダーク' : '背景: ライト');
         }
 
@@ -271,86 +224,31 @@
                         const moveSpeed = 0.03;
                         const rotateSpeed = 0.03;
                         
-                        // 左コントローラー (index 0)
-                        if (i === 0) {
-                            // 左スティック: 左右でX軸移動、上下でY軸移動
-                            if (Math.abs(axes[0]) > 0.1 || Math.abs(axes[1]) > 0.1) {
-                                modelPosition.x += axes[0] * moveSpeed;
-                                modelPosition.y -= axes[1] * moveSpeed;
-                                model.position.copy(modelPosition);
-                            }
+                        // 左スティック: 左右で横移動、上下で奥行き移動
+                        if (Math.abs(axes[0]) > 0.1 || Math.abs(axes[1]) > 0.1) {
+                            modelPosition.x += axes[0] * moveSpeed;
+                            modelPosition.z += axes[1] * moveSpeed;
+                            model.position.copy(modelPosition);
                         }
                         
-                        // 右コントローラー (index 1)
-                        if (i === 1) {
-                            // 右スティック: 上下でX軸回転、左右でZ軸回転
-                            if (Math.abs(axes[3]) > 0.1) {
-                                modelRotation.x += axes[3] * rotateSpeed;
-                                model.rotation.x = modelRotation.x;
-                            }
-                            if (Math.abs(axes[2]) > 0.1) {
-                                modelRotation.z += axes[2] * rotateSpeed;
-                                model.rotation.z = modelRotation.z;
-                            }
+                        // 右スティック: 上下で横軸回転
+                        if (Math.abs(axes[3]) > 0.1) {
+                            modelRotation += axes[3] * rotateSpeed;
+                            model.rotation.x = modelRotation;
                         }
                     }
                     
-                    // ボタン処理
-                    // 右コントローラー
-                    if (i === 1) {
-                        // Aボタン (ボタン4): ガイド線表示ON/OFF
-                        if (gamepad.buttons[4] && gamepad.buttons[4].pressed) {
-                            if (!gamepad.buttons[4].wasPressed) {
-                                toggleGrid();
-                            }
-                            gamepad.buttons[4].wasPressed = true;
-                        } else {
-                            gamepad.buttons[4].wasPressed = false;
+                    // Yボタン (ボタンインデックス4) でVR終了
+                    if (gamepad.buttons[4] && gamepad.buttons[4].pressed) {
+                        if (!gamepad.buttons[4].wasPressed) {
+                            exitVR();
                         }
-                        
-                        // Bボタン (ボタン5): VR終了
-                        if (gamepad.buttons[5] && gamepad.buttons[5].pressed) {
-                            if (!gamepad.buttons[5].wasPressed) {
-                                exitVR();
-                            }
-                            gamepad.buttons[5].wasPressed = true;
-                        } else {
-                            gamepad.buttons[5].wasPressed = false;
-                        }
-                    }
-                    
-                    // 左コントローラー
-                    if (i === 0) {
-                        // Xボタン (ボタン4): パススルーON/OFF
-                        if (gamepad.buttons[4] && gamepad.buttons[4].pressed) {
-                            if (!gamepad.buttons[4].wasPressed) {
-                                togglePassthrough();
-                            }
-                            gamepad.buttons[4].wasPressed = true;
-                        } else {
-                            gamepad.buttons[4].wasPressed = false;
-                        }
-                        
-                        // Yボタン (ボタン5): 背景色反転
-                        if (gamepad.buttons[5] && gamepad.buttons[5].pressed) {
-                            if (!gamepad.buttons[5].wasPressed) {
-                                toggleBackgroundColor();
-                            }
-                            gamepad.buttons[5].wasPressed = true;
-                        } else {
-                            gamepad.buttons[5].wasPressed = false;
-                        }
+                        gamepad.buttons[4].wasPressed = true;
+                    } else {
+                        gamepad.buttons[4].wasPressed = false;
                     }
                 }
             });
-
-            // 両グリップ同時押しで拡大縮小
-            if (leftGrip && rightGrip && controllers.length === 2) {
-                const currentDistance = controllers[0].controller.position.distanceTo(controllers[1].controller.position);
-                const scaleRatio = currentDistance / initialGripDistance;
-                modelScale = initialScale * scaleRatio;
-                model.scale.setScalar(modelScale);
-            }
         }
 
         function exitVR() {
@@ -395,56 +293,6 @@
 
         function updateStatus(message) {
             document.getElementById('status').textContent = message;
-        }
-
-        async function loadLocalFile(file) {
-            updateStatus('ローカルファイルを読み込んでいます...');
-            
-            try {
-                const url = URL.createObjectURL(file);
-                const loader = new THREE.GLTFLoader();
-                
-                loader.load(
-                    url,
-                    (gltf) => {
-                        if (model) {
-                            scene.remove(model);
-                        }
-                        
-                        model = gltf.scene;
-                        
-                        const box = new THREE.Box3().setFromObject(model);
-                        const center = box.getCenter(new THREE.Vector3());
-                        const size = box.getSize(new THREE.Vector3());
-                        
-                        const maxDim = Math.max(size.x, size.y, size.z);
-                        const scale = 2 / maxDim;
-                        model.scale.setScalar(scale);
-                        modelScale = scale;
-                        
-                        model.position.copy(modelPosition);
-                        scene.add(model);
-                        
-                        document.getElementById('vrBtn').disabled = false;
-                        updateStatus(`ファイル "${file.name}" を読み込みました!`);
-                        
-                        URL.revokeObjectURL(url);
-                    },
-                    (progress) => {
-                        const percent = (progress.loaded / progress.total * 100).toFixed(0);
-                        updateStatus(`読み込み中: ${percent}%`);
-                    },
-                    (error) => {
-                        updateStatus('エラー: ファイルの読み込みに失敗しました');
-                        console.error(error);
-                        URL.revokeObjectURL(url);
-                    }
-                );
-                
-            } catch (error) {
-                updateStatus('エラー: ' + error.message);
-                console.error(error);
-            }
         }
 
         async function loadSketchfabModel(modelId) {
@@ -498,24 +346,6 @@
                 loadSketchfabModel(modelId);
             } else {
                 updateStatus('エラー: 有効なSketchfab URLまたはモデルIDを入力してください');
-            }
-        });
-
-        document.getElementById('loadFileBtn').addEventListener('click', () => {
-            const fileInput = document.getElementById('fileInput');
-            const file = fileInput.files[0];
-            
-            if (file) {
-                loadLocalFile(file);
-            } else {
-                updateStatus('エラー: ファイルを選択してください');
-            }
-        });
-
-        document.getElementById('fileInput').addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                loadLocalFile(file);
             }
         });
 
